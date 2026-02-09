@@ -26,6 +26,9 @@ public interface UserRepository extends JpaRepository<User, String> {
 
     long countByRole(UserRole role);
 
+    // Get all users by role (without pagination)
+    java.util.List<User> findAllByRole(UserRole role);
+
     // Pagination and filtering methods
     Page<User> findByUsernameContainingIgnoreCase(String username, Pageable pageable);
 

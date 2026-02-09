@@ -1,87 +1,147 @@
 package com.hms.controller;
 
+import com.hms.dto.request.AddResponseRequest;
+import com.hms.dto.request.ResolveComplaintRequest;
+import com.hms.dto.request.StaffActionRequest;
+import com.hms.dto.request.UpdateComplaintStatusRequest;
 import com.hms.dto.response.ApiResponse;
 import com.hms.entity.Complaint;
-import com.hms.enums.ComplaintStatus;
-import com.hms.service.StaffService;
+import com.hms.entity.User;
+import com.hms.repository.UserRepository;
+import com.hms.service.ComplaintService;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
-import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
-import java.util.Map;
 
 @RestController
 @RequestMapping("/staff")
 @RequiredArgsConstructor
 public class StaffController {
 
-    private final StaffService staffService;
+        private final ComplaintService complaintService;
+        private final UserRepository userRepository;
 
-    @GetMapping("/complaints")
-    public ResponseEntity<ApiResponse<List<Complaint>>> getAssignedComplaints(
-            Authentication authentication) {
-        UserDetails userDetails = (UserDetails) authentication.getPrincipal();
-        String staffId = userDetails.getUsername(); // Simplified - would need actual staff ID
+        /**
+         * Get all complaints assigned to the logged-in staff member
+         */
+        @GetMapping("/complaints")
+        public ResponseEntity<ApiResponse<List<Complaint>>> getMyComplaints(Authentication authentication) {
+                String username = authentication.getName();
+                User staffUser = userRepository.findByUsername(username)
+                                .orElseThrow(() -> new RuntimeException("Staff user not found"));
+                String staffUserId = staffUser.getUserId();
+                List<Complaint> complaints = complaintService.getStaffComplaints(staffUserId);
 
-        List<Complaint> complaints = staffService.getAssignedComplaints(staffId);
+                ApiResponse<List<Complaint>> response = ApiResponse.success(
+                                "Complaints retrieved successfully",
+                                complaints);
 
-        ApiResponse<List<Complaint>> response = ApiResponse.success(
-                "Complaints retrieved successfully",
-                complaints);
+                return ResponseEntity.ok(response);
+        }
 
-        return ResponseEntity.ok(response);
-    }
+        /**
+         * Get detailed view of a specific complaint
+         */
+        @GetMapping("/complaints/{complaintId}")
+        public ResponseEntity<ApiResponse<Complaint>> getComplaintDetail(
+                        @PathVariable String complaintId,
+                        Authentication authentication) {
 
-    @GetMapping("/complaints/{complaintId}")
-    public ResponseEntity<ApiResponse<Complaint>> getComplaintDetails(
-            @PathVariable String complaintId) {
-        Complaint complaint = staffService.getComplaintDetails(complaintId);
+                String username = authentication.getName();
+                User staffUser = userRepository.findByUsername(username)
+                                .orElseThrow(() -> new RuntimeException("Staff user not found"));
+                String staffUserId = staffUser.getUserId();
+                Complaint complaint = complaintService.getComplaintByIdForStaff(complaintId, staffUserId);
 
-        ApiResponse<Complaint> response = ApiResponse.success(
-                "Complaint details retrieved",
-                complaint);
+                ApiResponse<Complaint> response = ApiResponse.success(
+                                "Complaint details retrieved successfully",
+                                complaint);
 
-        return ResponseEntity.ok(response);
-    }
+                return ResponseEntity.ok(response);
+        }
 
-    @PostMapping("/complaints/{complaintId}/log")
-    public ResponseEntity<ApiResponse<Void>> logAction(
-            @PathVariable String complaintId,
-            @RequestBody Map<String, String> requestBody,
-            Authentication authentication) {
-        UserDetails userDetails = (UserDetails) authentication.getPrincipal();
-        String performedBy = userDetails.getUsername();
+        /**
+         * Add action log entry to a complaint
+         */
+        @PostMapping("/complaints/{complaintId}/action")
+        public ResponseEntity<ApiResponse<Complaint>> addAction(
+                        @PathVariable String complaintId,
+                        @Valid @RequestBody StaffActionRequest request,
+                        Authentication authentication) {
 
-        String actionDescription = requestBody.get("actionDescription");
-        staffService.logAction(complaintId, actionDescription, performedBy);
+                String username = authentication.getName();
+                User staffUser = userRepository.findByUsername(username)
+                                .orElseThrow(() -> new RuntimeException("Staff user not found"));
+                String staffUserId = staffUser.getUserId();
 
-        ApiResponse<Void> response = new ApiResponse<>(
-                true,
-                "Action logged successfully",
-                null);
+                // Create AddResponseRequest from StaffActionRequest
+                AddResponseRequest addResponseRequest = new AddResponseRequest();
+                addResponseRequest.setAction(request.getAction());
+                addResponseRequest.setNotes(request.getNotes());
 
-        return new ResponseEntity<>(response, HttpStatus.CREATED);
-    }
+                Complaint complaint = complaintService.addStaffAction(
+                                complaintId,
+                                addResponseRequest,
+                                staffUserId);
 
-    @PutMapping("/complaints/{complaintId}/status")
-    public ResponseEntity<ApiResponse<Void>> updateComplaintStatus(
-            @PathVariable String complaintId,
-            @RequestBody Map<String, String> requestBody) {
-        String statusStr = requestBody.get("status");
-        String resolutionNotes = requestBody.get("resolutionNotes");
+                ApiResponse<Complaint> response = ApiResponse.success(
+                                "Action logged successfully",
+                                complaint);
 
-        ComplaintStatus status = ComplaintStatus.valueOf(statusStr);
-        staffService.updateComplaintStatus(complaintId, status, resolutionNotes);
+                return ResponseEntity.ok(response);
+        }
 
-        ApiResponse<Void> response = new ApiResponse<>(
-                true,
-                "Complaint status updated successfully",
-                null);
+        /**
+         * Update complaint status
+         */
+        @PutMapping("/complaints/{complaintId}/status")
+        public ResponseEntity<ApiResponse<Complaint>> updateStatus(
+                        @PathVariable String complaintId,
+                        @Valid @RequestBody UpdateComplaintStatusRequest request,
+                        Authentication authentication) {
 
-        return ResponseEntity.ok(response);
-    }
+                String username = authentication.getName();
+                User staffUser = userRepository.findByUsername(username)
+                                .orElseThrow(() -> new RuntimeException("Staff user not found"));
+                String staffUserId = staffUser.getUserId();
+                Complaint complaint = complaintService.updateComplaintStatusByStaff(
+                                complaintId,
+                                request,
+                                staffUserId);
+
+                ApiResponse<Complaint> response = ApiResponse.success(
+                                "Status updated successfully",
+                                complaint);
+
+                return ResponseEntity.ok(response);
+        }
+
+        /**
+         * Resolve a complaint
+         */
+        @PutMapping("/complaints/{complaintId}/resolve")
+        public ResponseEntity<ApiResponse<Complaint>> resolveComplaint(
+                        @PathVariable String complaintId,
+                        @Valid @RequestBody ResolveComplaintRequest request,
+                        Authentication authentication) {
+
+                String username = authentication.getName();
+                User staffUser = userRepository.findByUsername(username)
+                                .orElseThrow(() -> new RuntimeException("Staff user not found"));
+                String staffUserId = staffUser.getUserId();
+                Complaint complaint = complaintService.resolveComplaintByStaff(
+                                complaintId,
+                                request,
+                                staffUserId);
+
+                ApiResponse<Complaint> response = ApiResponse.success(
+                                "Complaint resolved successfully",
+                                complaint);
+
+                return ResponseEntity.ok(response);
+        }
 }

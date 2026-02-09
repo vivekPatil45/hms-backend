@@ -207,7 +207,11 @@ public class CustomerController {
                 UserDetails userDetails = (UserDetails) authentication.getPrincipal();
                 String username = userDetails.getUsername();
 
-                Complaint complaint = complaintService.createComplaint(username, request);
+                // Resolve username to userId
+                User user = userRepository.findByUsername(username)
+                                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found"));
+
+                Complaint complaint = complaintService.createComplaint(user.getUserId(), request);
 
                 Map<String, Object> data = new HashMap<>();
                 data.put("complaintId", complaint.getComplaintId());
@@ -231,12 +235,73 @@ public class CustomerController {
                 UserDetails userDetails = (UserDetails) authentication.getPrincipal();
                 String username = userDetails.getUsername();
 
-                List<Complaint> complaints = complaintService.getCustomerComplaints(username);
+                // Resolve username to userId
+                User user = userRepository.findByUsername(username)
+                                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found"));
+
+                List<Complaint> complaints = complaintService.getCustomerComplaints(user.getUserId());
 
                 ApiResponse<List<Complaint>> response = ApiResponse.success(
                                 "Complaints retrieved successfully",
                                 complaints);
 
                 return ResponseEntity.ok(response);
+        }
+
+        @GetMapping("/complaints/{complaintId}")
+        public ResponseEntity<ApiResponse<Complaint>> getComplaintById(
+                        @PathVariable String complaintId,
+                        Authentication authentication) {
+                UserDetails userDetails = (UserDetails) authentication.getPrincipal();
+                String username = userDetails.getUsername();
+
+                User user = userRepository.findByUsername(username)
+                                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found"));
+
+                try {
+                        Complaint complaint = complaintService.getComplaintById(complaintId, user.getUserId());
+                        ApiResponse<Complaint> response = ApiResponse.success(
+                                        "Complaint retrieved successfully",
+                                        complaint);
+                        return ResponseEntity.ok(response);
+                } catch (Exception e) {
+                        throw new ResponseStatusException(HttpStatus.NOT_FOUND,
+                                        "The complaint you are looking for does not exist or has been deleted.");
+                }
+        }
+
+        @PutMapping("/complaints/{complaintId}/status")
+        public ResponseEntity<ApiResponse<Complaint>> updateComplaintStatus(
+                        @PathVariable String complaintId,
+                        @RequestBody Map<String, String> requestBody,
+                        Authentication authentication) {
+                UserDetails userDetails = (UserDetails) authentication.getPrincipal();
+                String username = userDetails.getUsername();
+
+                User user = userRepository.findByUsername(username)
+                                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found"));
+
+                String statusStr = requestBody.get("status");
+                if (statusStr == null) {
+                        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Status is required");
+                }
+
+                try {
+                        com.hms.enums.ComplaintStatus newStatus = com.hms.enums.ComplaintStatus.valueOf(statusStr);
+                        Complaint complaint = complaintService.updateComplaintStatus(complaintId, newStatus,
+                                        user.getUserId());
+
+                        ApiResponse<Complaint> response = ApiResponse.success(
+                                        "Complaint status updated successfully",
+                                        complaint);
+                        return ResponseEntity.ok(response);
+                } catch (IllegalArgumentException e) {
+                        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid status value");
+                } catch (IllegalStateException e) {
+                        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, e.getMessage());
+                } catch (Exception e) {
+                        throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
+                                        "Unable to fetch complaint status. Please try again later.");
+                }
         }
 }

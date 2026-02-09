@@ -7,13 +7,16 @@ import com.hms.dto.response.ApiResponse;
 import com.hms.dto.response.CreateUserResponse;
 import com.hms.dto.response.UserListResponse;
 import com.hms.dto.response.UserResponse;
+import com.hms.entity.Customer;
 import com.hms.entity.User;
 import com.hms.enums.UserRole;
 import com.hms.enums.UserStatus;
 import com.hms.exception.DuplicateResourceException;
 import com.hms.exception.InvalidRequestException;
 import com.hms.exception.ResourceNotFoundException;
+import com.hms.repository.CustomerRepository;
 import com.hms.repository.UserRepository;
+import com.hms.util.BeanUtil;
 import com.hms.util.IdGenerator;
 import com.hms.util.PasswordUtils;
 import lombok.RequiredArgsConstructor;
@@ -35,6 +38,7 @@ import java.util.stream.Collectors;
 public class UserManagementService {
 
     private final UserRepository userRepository;
+    private final CustomerRepository customerRepository;
     private final PasswordEncoder passwordEncoder;
     private final IdGenerator idGenerator;
 
@@ -76,6 +80,16 @@ public class UserManagementService {
         user.setFailedLoginAttempts(0);
 
         User savedUser = userRepository.save(user);
+
+        // Create customer profile if role is CUSTOMER
+        if (savedUser.getRole() == UserRole.CUSTOMER) {
+            Customer customer = new Customer();
+            customer.setCustomerId(idGenerator.generateCustomerId());
+            customer.setUser(savedUser);
+            customer.setLoyaltyPoints(0);
+            customer.setTotalBookings(0);
+            customerRepository.save(customer);
+        }
 
         // Prepare response
         CreateUserResponse response = new CreateUserResponse();

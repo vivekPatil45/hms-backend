@@ -14,22 +14,22 @@ import java.util.List;
 
 @Repository
 public interface ComplaintRepository extends JpaRepository<Complaint, String> {
-    List<Complaint> findByCustomer_CustomerId(String customerId);
+        List<Complaint> findByCustomer_CustomerId(String customerId);
 
-    List<Complaint> findByAssignedTo(String assignedTo);
+        List<Complaint> findByAssignedTo(String assignedTo);
 
-    List<Complaint> findByStatus(ComplaintStatus status);
+        List<Complaint> findByStatus(ComplaintStatus status);
 
-    @Query("SELECT c FROM Complaint c WHERE " +
-            "(:status IS NULL OR c.status = :status) AND " +
-            "(:category IS NULL OR c.category = :category) AND " +
-            "(:priority IS NULL OR c.priority = :priority) AND " +
-            "(:dateFrom IS NULL OR c.createdAt >= :dateFrom)")
-    List<Complaint> searchComplaints(
-            @Param("status") ComplaintStatus status,
-            @Param("category") ComplaintCategory category,
-            @Param("priority") ComplaintPriority priority,
-            @Param("dateFrom") LocalDate dateFrom);
+        @Query("SELECT DISTINCT c FROM Complaint c WHERE " +
+                        "(:status IS NULL OR c.status = :status) AND " +
+                        "(:category IS NULL OR c.category = :category) AND " +
+                        "(:priority IS NULL OR c.priority = :priority) AND " +
+                        "(:dateFrom IS NULL OR c.createdAt >= :dateFrom)")
+        List<Complaint> searchComplaints(
+                        @Param("status") ComplaintStatus status,
+                        @Param("category") ComplaintCategory category,
+                        @Param("priority") ComplaintPriority priority,
+                        @Param("dateFrom") LocalDate dateFrom);
 
-    long countByStatus(ComplaintStatus status);
+        long countByStatus(ComplaintStatus status);
 }

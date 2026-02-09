@@ -1,5 +1,6 @@
 package com.hms.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.hms.enums.UserRole;
 import com.hms.enums.UserStatus;
 import jakarta.persistence.*;
@@ -63,5 +64,6 @@ public class User {
     private LocalDateTime updatedAt;
 
     @OneToOne(mappedBy = "user", cascade = CascadeType.ALL)
+    @JsonIgnore
     private Customer customer;
 }

@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.*;
 @RequiredArgsConstructor
 public class UserController {
 
+    private final com.hms.repository.UserRepository userRepository;
     private final UserManagementService userManagementService;
 
     /**
@@ -26,10 +27,14 @@ public class UserController {
             Authentication authentication,
             @Valid @RequestBody ChangePasswordRequest request) {
 
-        // Get userId from authentication (username is userId in our system)
-        String userId = authentication.getName();
+        // Get username from authentication
+        String username = authentication.getName();
 
-        ApiResponse<Void> response = userManagementService.changePassword(userId, request);
+        // Find user to get the correct UserId
+        com.hms.entity.User user = userRepository.findByUsername(username)
+                .orElseThrow(() -> new com.hms.exception.ResourceNotFoundException("User not found"));
+
+        ApiResponse<Void> response = userManagementService.changePassword(user.getUserId(), request);
         return ResponseEntity.ok(response);
     }
 }

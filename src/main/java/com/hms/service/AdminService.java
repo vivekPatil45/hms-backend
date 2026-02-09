@@ -275,6 +275,37 @@ public class AdminService {
         return result;
     }
 
+    public Map<String, Object> fixMissingCustomers() {
+        Map<String, Object> result = new HashMap<>();
+        List<String> fixedUsers = new java.util.ArrayList<>();
+        int count = 0;
+
+        com.hms.repository.UserRepository userRepository = com.hms.util.BeanUtil
+                .getBean(com.hms.repository.UserRepository.class);
+        com.hms.repository.CustomerRepository customerRepository = com.hms.util.BeanUtil
+                .getBean(com.hms.repository.CustomerRepository.class);
+
+        List<com.hms.entity.User> customers = userRepository
+                .findByRole(com.hms.enums.UserRole.CUSTOMER, Pageable.unpaged()).getContent();
+
+        for (com.hms.entity.User user : customers) {
+            if (customerRepository.findByUser_UserId(user.getUserId()).isEmpty()) {
+                com.hms.entity.Customer customer = new com.hms.entity.Customer();
+                customer.setCustomerId(idGenerator.generateCustomerId());
+                customer.setUser(user);
+                customer.setLoyaltyPoints(0);
+                customer.setTotalBookings(0);
+                customerRepository.save(customer);
+                fixedUsers.add(user.getUsername());
+                count++;
+            }
+        }
+
+        result.put("fixedCount", count);
+        result.put("fixedUsers", fixedUsers);
+        return result;
+    }
+
     private RoomResponse mapToRoomResponse(Room room) {
         RoomResponse response = new RoomResponse();
         response.setRoomId(room.getRoomId());
