@@ -15,22 +15,25 @@ import java.util.List;
 @AllArgsConstructor
 public class RoomSearchRequest {
 
-    @NotNull(message = "Check-in date cannot be in the past.")
+    @NotNull(message = "Check-in date is required.")
     @FutureOrPresent(message = "Check-in date cannot be in the past.")
+    @com.fasterxml.jackson.annotation.JsonFormat(shape = com.fasterxml.jackson.annotation.JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd")
     private LocalDate checkInDate;
 
-    @NotNull(message = "Check-out date must be after the check-in date.")
+    @NotNull(message = "Check-out date is required.")
+    @com.fasterxml.jackson.annotation.JsonFormat(shape = com.fasterxml.jackson.annotation.JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd")
     private LocalDate checkOutDate;
 
     @NotNull(message = "At least one adult must be selected.")
     @Min(value = 1, message = "At least one adult must be selected.")
     @Max(value = 10, message = "Maximum 10 adults allowed.")
-    private Integer numberOfAdults;
+    private Integer numberOfAdults = 1;
 
     @Min(value = 0, message = "Number of children cannot be negative.")
     @Max(value = 5, message = "Maximum 5 children allowed.")
     private Integer numberOfChildren = 0;
 
+    @NotNull(message = "Please select a room type.")
     private RoomType roomType;
 
     @Min(value = 0, message = "Minimum price cannot be negative.")
@@ -41,7 +44,7 @@ public class RoomSearchRequest {
 
     private List<String> amenities;
 
-    private String sortBy = "price";
+    private String sortBy = "pricePerNight";
 
     private String sortOrder = "asc";
 }

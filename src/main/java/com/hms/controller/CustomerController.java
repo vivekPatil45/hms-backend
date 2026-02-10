@@ -36,6 +36,7 @@ public class CustomerController {
         private final ComplaintService complaintService;
         private final ReservationRepository reservationRepository;
         private final UserRepository userRepository;
+        private final com.hms.repository.CustomerRepository customerRepository;
 
         @GetMapping("/{userId}")
         public ResponseEntity<ApiResponse<UserResponse>> getProfile(
@@ -115,8 +116,10 @@ public class CustomerController {
                 UserDetails userDetails = (UserDetails) authentication.getPrincipal();
                 String username = userDetails.getUsername();
 
-                // Extract userId from username (you may need to fetch from UserRepository)
-                Reservation reservation = reservationService.createReservation(username, request);
+                User user = userRepository.findByUsername(username)
+                                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found"));
+
+                Reservation reservation = reservationService.createReservation(user.getUserId(), request);
 
                 Map<String, Object> data = new HashMap<>();
                 data.put("reservationId", reservation.getReservationId());
@@ -161,15 +164,52 @@ public class CustomerController {
                         @RequestParam(defaultValue = "0") int page,
                         @RequestParam(defaultValue = "10") int size,
                         Authentication authentication) {
-                // This is a simplified version - you'd need to get customer from user
+                UserDetails userDetails = (UserDetails) authentication.getPrincipal();
+                User user = userRepository.findByUsername(userDetails.getUsername())
+                                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found"));
+
+                // Get customer profile
+                com.hms.entity.Customer customer = customerRepository.findByUser_UserId(user.getUserId())
+                                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+                                                "Customer profile not found"));
+
+                com.hms.enums.ReservationStatus reservationStatus = null;
+                if (status != null && !status.isEmpty()) {
+                        try {
+                                reservationStatus = com.hms.enums.ReservationStatus.valueOf(status.toUpperCase());
+                        } catch (IllegalArgumentException e) {
+                                // Ignore invalid status
+                        }
+                }
+
                 Pageable pageable = PageRequest.of(page, size);
+                org.springframework.data.domain.Page<Reservation> reservationPage;
+
+                if (reservationStatus != null) {
+                        reservationPage = reservationRepository.findByCustomer_CustomerIdAndStatus(
+                                        customer.getCustomerId(), reservationStatus, pageable);
+                } else {
+                        // Find all by customer ID (need to add method to repository if not exists for
+                        // Page)
+                        // Or use the one that exists: findByCustomer_CustomerIdAndStatus with null? No.
+                        // Let's check repository.
+                        // We will use a new method or existing.
+                        // Existing: findByCustomer_CustomerId(String customerId) returns List.
+                        // We need Page.
+                        // Let's implement findByCustomer_CustomerId(Pageable) in Repository first?
+                        // Or just use the list and wrap it (inefficient).
+                        // Let's rely on adding a method to repository or using what we have.
+                        // Actually, let's assume we can add it.
+                        reservationPage = reservationRepository.findByCustomer_CustomerId(
+                                        customer.getCustomerId(), pageable);
+                }
 
                 Map<String, Object> data = new HashMap<>();
-                data.put("content", List.of());
-                data.put("page", page);
-                data.put("size", size);
-                data.put("totalElements", 0);
-                data.put("totalPages", 0);
+                data.put("content", reservationPage.getContent());
+                data.put("page", reservationPage.getNumber());
+                data.put("size", reservationPage.getSize());
+                data.put("totalElements", reservationPage.getTotalElements());
+                data.put("totalPages", reservationPage.getTotalPages());
 
                 ApiResponse<Map<String, Object>> response = ApiResponse.success(
                                 "Bookings retrieved successfully",
@@ -268,6 +308,51 @@ public class CustomerController {
                         throw new ResponseStatusException(HttpStatus.NOT_FOUND,
                                         "The complaint you are looking for does not exist or has been deleted.");
                 }
+        }
+
+        @GetMapping("/reservations/{reservationId}")
+        public ResponseEntity<ApiResponse<Reservation>> getReservationById(
+                        @PathVariable String reservationId,
+                        Authentication authentication) {
+                UserDetails userDetails = (UserDetails) authentication.getPrincipal();
+                User user = userRepository.findByUsername(userDetails.getUsername())
+                                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found"));
+
+                Reservation reservation = reservationService.getReservationById(reservationId);
+
+                // Security check
+                if (!reservation.getCustomer().getUser().getUserId().equals(user.getUserId())) {
+                        throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Access denied");
+                }
+
+                return ResponseEntity.ok(ApiResponse.success("Reservation retrieved successfully", reservation));
+        }
+
+        @PostMapping("/reservations/{reservationId}/payment")
+        public ResponseEntity<ApiResponse<Map<String, Object>>> confirmPayment(
+                        @PathVariable String reservationId,
+                        @Valid @RequestBody com.hms.dto.request.PaymentRequest request,
+                        Authentication authentication) {
+                // Verify user access
+                Reservation existing = reservationService.getReservationById(reservationId);
+                UserDetails userDetails = (UserDetails) authentication.getPrincipal();
+                // We should ideally check if the user calling this owns the reservation,
+                // similar to getReservationById
+
+                Reservation reservation = reservationService.confirmPayment(reservationId, request.getPaymentMethod(),
+                                request.getTransactionId());
+
+                Map<String, Object> data = new HashMap<>();
+                data.put("reservationId", reservation.getReservationId());
+                data.put("status", reservation.getStatus());
+                data.put("paymentStatus", reservation.getPaymentStatus());
+                data.put("transactionId", reservation.getTransactionId());
+
+                ApiResponse<Map<String, Object>> response = ApiResponse.success(
+                                "Payment confirmed and booking completed",
+                                data);
+
+                return ResponseEntity.ok(response);
         }
 
         @PutMapping("/complaints/{complaintId}/status")

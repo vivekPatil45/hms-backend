@@ -28,10 +28,8 @@ public interface RoomRepository extends JpaRepository<Room, String> {
                         "(:minOccupancy IS NULL OR r.maxOccupancy >= :minOccupancy) AND " +
                         "r.roomId NOT IN (" +
                         "  SELECT res.room.roomId FROM Reservation res WHERE " +
-                        "  res.status IN ('CONFIRMED', 'CHECKED_IN') AND " +
-                        "  ((:checkIn BETWEEN res.checkInDate AND res.checkOutDate) OR " +
-                        "   (:checkOut BETWEEN res.checkInDate AND res.checkOutDate) OR " +
-                        "   (res.checkInDate BETWEEN :checkIn AND :checkOut))" +
+                        "  res.status IN ('CONFIRMED', 'CHECKED_IN', 'PENDING_PAYMENT') AND " +
+                        "  res.checkOutDate > :checkIn AND res.checkInDate < :checkOut" +
                         ")")
         Page<Room> searchAvailableRooms(
                         @Param("checkIn") LocalDate checkIn,

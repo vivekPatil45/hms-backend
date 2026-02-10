@@ -42,4 +42,10 @@ public class RoomService {
                 minOccupancy,
                 pageable);
     }
+
+    public Room getRoomById(String roomId) {
+        return roomRepository.findById(roomId)
+                .orElseThrow(
+                        () -> new com.hms.exception.ResourceNotFoundException("Room not found with id: " + roomId));
+    }
 }

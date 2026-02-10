@@ -19,6 +19,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
+import java.util.List;
 
 @Service
 @RequiredArgsConstructor
@@ -27,15 +28,26 @@ public class ReservationService {
     private final ReservationRepository reservationRepository;
     private final CustomerRepository customerRepository;
     private final RoomRepository roomRepository;
+    private final com.hms.repository.UserRepository userRepository; // Inject UserRepository
     private final IdGenerator idGenerator;
 
     private static final BigDecimal TAX_RATE = new BigDecimal("0.12"); // 12% tax
 
     @Transactional
     public Reservation createReservation(String userId, CreateReservationRequest request) {
-        // Find customer by user ID
+        // Find customer by user ID, or create if not exists (Legacy support)
         Customer customer = customerRepository.findByUser_UserId(userId)
-                .orElseThrow(() -> new ResourceNotFoundException("Customer profile not found"));
+                .orElseGet(() -> {
+                    com.hms.entity.User user = userRepository.findById(userId)
+                            .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+
+                    Customer newCustomer = new Customer();
+                    newCustomer.setCustomerId(idGenerator.generateCustomerId());
+                    newCustomer.setUser(user);
+                    newCustomer.setLoyaltyPoints(0);
+                    newCustomer.setTotalBookings(0);
+                    return customerRepository.save(newCustomer);
+                });
 
         // Find room
         Room room = roomRepository.findById(request.getRoomId())
@@ -55,6 +67,14 @@ public class ReservationService {
         int totalGuests = request.getNumberOfAdults() + request.getNumberOfChildren();
         if (totalGuests > room.getMaxOccupancy()) {
             throw new InvalidRequestException("Number of guests exceeds room capacity");
+        }
+
+        // Check for room availability (Prevent Double Booking)
+        List<Reservation> overlappingReservations = reservationRepository.findOverlappingReservations(
+                room.getRoomId(), request.getCheckInDate(), request.getCheckOutDate());
+
+        if (!overlappingReservations.isEmpty()) {
+            throw new InvalidRequestException("Room is already booked for the selected dates.");
         }
 
         // Calculate number of nights
@@ -110,6 +130,23 @@ public class ReservationService {
         reservation.setRefundAmount(refundAmount);
 
         reservationRepository.save(reservation);
+    }
+
+    @Transactional
+    public Reservation confirmPayment(String reservationId, com.hms.enums.PaymentMethod paymentMethod,
+            String transactionId) {
+        Reservation reservation = getReservationById(reservationId);
+
+        if (reservation.getStatus() == ReservationStatus.CANCELLED) {
+            throw new InvalidRequestException("Cannot confirm payment for cancelled reservation");
+        }
+
+        reservation.setPaymentStatus(PaymentStatus.PAID);
+        reservation.setPaymentMethod(paymentMethod);
+        reservation.setTransactionId(transactionId);
+        reservation.setStatus(ReservationStatus.CONFIRMED);
+
+        return reservationRepository.save(reservation);
     }
 
     private BigDecimal calculateRefund(Reservation reservation) {

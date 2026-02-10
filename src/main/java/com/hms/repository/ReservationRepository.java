@@ -16,6 +16,8 @@ import java.util.List;
 public interface ReservationRepository extends JpaRepository<Reservation, String> {
         List<Reservation> findByCustomer_CustomerId(String customerId);
 
+        Page<Reservation> findByCustomer_CustomerId(String customerId, Pageable pageable);
+
         Page<Reservation> findByCustomer_CustomerIdAndStatus(String customerId, ReservationStatus status,
                         Pageable pageable);
 
@@ -45,4 +47,12 @@ public interface ReservationRepository extends JpaRepository<Reservation, String
         List<Reservation> findByRoomAndStatusIn(
                         com.hms.entity.Room room,
                         List<ReservationStatus> statuses);
+
+        @Query("SELECT r FROM Reservation r WHERE r.room.roomId = :roomId " +
+                        "AND r.status <> 'CANCELLED' " +
+                        "AND ((:checkInDate < r.checkOutDate) AND (:checkOutDate > r.checkInDate))")
+        List<Reservation> findOverlappingReservations(
+                        @Param("roomId") String roomId,
+                        @Param("checkInDate") LocalDate checkInDate,
+                        @Param("checkOutDate") LocalDate checkOutDate);
 }

@@ -129,6 +129,8 @@ public class AuthService {
                     user.getUserId(),
                     user.getUsername(),
                     user.getFullName(),
+                    user.getEmail(),
+                    user.getMobileNumber(),
                     user.getRole(),
                     user.getRequirePasswordChange());
 

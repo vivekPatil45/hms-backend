@@ -78,5 +78,6 @@ public class Room {
     private LocalDateTime updatedAt;
 
     @OneToMany(mappedBy = "room", cascade = CascadeType.ALL)
+    @com.fasterxml.jackson.annotation.JsonIgnore
     private List<Reservation> reservations = new ArrayList<>();
 }

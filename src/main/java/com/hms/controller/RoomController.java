@@ -40,4 +40,10 @@ public class RoomController {
 
         return ResponseEntity.ok(response);
     }
+
+    @GetMapping("/{roomId}")
+    public ResponseEntity<ApiResponse<Room>> getRoomById(@PathVariable String roomId) {
+        Room room = roomService.getRoomById(roomId);
+        return ResponseEntity.ok(ApiResponse.success("Room retrieved successfully", room));
+    }
 }
