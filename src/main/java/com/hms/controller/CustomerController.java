@@ -218,6 +218,19 @@ public class CustomerController {
                 return ResponseEntity.ok(response);
         }
 
+        @GetMapping("/reservations/{reservationId}/check-cancellation")
+        public ResponseEntity<ApiResponse<Map<String, Object>>> checkCancellation(
+                        @PathVariable String reservationId,
+                        Authentication authentication) {
+                Map<String, Object> cancellationDetails = reservationService.checkCancellation(reservationId);
+
+                ApiResponse<Map<String, Object>> response = ApiResponse.success(
+                                "Cancellation check successful",
+                                cancellationDetails);
+
+                return ResponseEntity.ok(response);
+        }
+
         @DeleteMapping("/reservations/{reservationId}")
         public ResponseEntity<ApiResponse<Map<String, Object>>> cancelReservation(
                         @PathVariable String reservationId,
@@ -351,6 +364,34 @@ public class CustomerController {
                 ApiResponse<Map<String, Object>> response = ApiResponse.success(
                                 "Payment confirmed and booking completed",
                                 data);
+
+                return ResponseEntity.ok(response);
+        }
+
+        @PostMapping("/reservations/{reservationId}/check-modification")
+        public ResponseEntity<ApiResponse<Map<String, Object>>> checkModification(
+                        @PathVariable String reservationId,
+                        @Valid @RequestBody com.hms.dto.request.ModifyReservationRequest request,
+                        Authentication authentication) {
+                Map<String, Object> modificationDetails = reservationService.checkModification(reservationId, request);
+
+                ApiResponse<Map<String, Object>> response = ApiResponse.success(
+                                "Modification check successful",
+                                modificationDetails);
+
+                return ResponseEntity.ok(response);
+        }
+
+        @PutMapping("/reservations/{reservationId}")
+        public ResponseEntity<ApiResponse<Reservation>> updateReservation(
+                        @PathVariable String reservationId,
+                        @Valid @RequestBody com.hms.dto.request.ModifyReservationRequest request,
+                        Authentication authentication) {
+                Reservation reservation = reservationService.modifyReservation(reservationId, request);
+
+                ApiResponse<Reservation> response = ApiResponse.success(
+                                "Booking modified successfully",
+                                reservation);
 
                 return ResponseEntity.ok(response);
         }

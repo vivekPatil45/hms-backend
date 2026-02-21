@@ -23,10 +23,26 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
-import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import com.hms.repository.ComplaintRepository;
+import com.hms.repository.specification.ReservationSpecification;
+import com.hms.enums.ComplaintStatus;
+import com.hms.enums.PaymentStatus;
+import com.hms.dto.request.AdminCreateReservationRequest;
+import com.hms.dto.request.ModifyReservationRequest;
+import com.hms.enums.PaymentMethod;
+import com.hms.entity.User;
+import com.hms.entity.Customer;
+import com.hms.enums.UserRole;
+import com.hms.enums.UserStatus;
+import com.hms.repository.UserRepository;
+import com.hms.repository.CustomerRepository;
+import com.hms.entity.Bill;
+import com.hms.repository.BillRepository;
+import com.hms.repository.specification.BillSpecification;
 
 @Service
 @RequiredArgsConstructor
@@ -34,38 +50,70 @@ public class AdminService {
 
     private final RoomRepository roomRepository;
     private final ReservationRepository reservationRepository;
+    private final ComplaintRepository complaintRepository;
+    private final UserRepository userRepository;
+    private final CustomerRepository customerRepository;
+    private final ReservationService reservationService;
+    private final BillRepository billRepository;
     private final IdGenerator idGenerator;
 
     public Map<String, Object> getDashboardStatistics() {
         Map<String, Object> stats = new HashMap<>();
 
         long totalRooms = roomRepository.count();
-        long availableRooms = roomRepository.findByAvailability(true).size();
-        long occupiedRooms = totalRooms - availableRooms;
 
-        LocalDate today = LocalDate.now();
-        LocalDate weekStart = today.minusDays(today.getDayOfWeek().getValue() - 1);
-        LocalDate monthStart = today.withDayOfMonth(1);
+        // Count available rooms properly
+        long availableRooms = roomRepository.findAll().stream()
+                .filter(Room::getAvailability)
+                .filter(room -> !hasActiveReservation(room))
+                .count();
 
         stats.put("totalRooms", totalRooms);
         stats.put("availableRooms", availableRooms);
-        stats.put("occupiedRooms", occupiedRooms);
 
-        Map<String, Long> totalBookings = new HashMap<>();
-        totalBookings.put("today", 0L); // Simplified - would need actual count
-        totalBookings.put("thisWeek", 0L);
-        totalBookings.put("thisMonth", 0L);
+        long totalBookings = reservationRepository.count();
         stats.put("totalBookings", totalBookings);
 
-        Map<String, BigDecimal> revenue = new HashMap<>();
-        revenue.put("today", BigDecimal.ZERO);
-        revenue.put("thisWeek", BigDecimal.ZERO);
-        revenue.put("thisMonth", BigDecimal.ZERO);
-        stats.put("revenue", revenue);
+        LocalDate today = LocalDate.now();
 
-        stats.put("activeComplaints", 0);
-        stats.put("resolvedComplaints", 0);
-        stats.put("totalCustomers", 0);
+        // Revenue: Sum of totalAmount for CONFIRMED/PAID reservations
+        List<Reservation> confirmedReservations = reservationRepository.findByStatus(ReservationStatus.CONFIRMED);
+        BigDecimal totalRevenue = confirmedReservations.stream()
+                .map(Reservation::getTotalAmount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        stats.put("totalRevenue", totalRevenue);
+
+        // Today's Check-ins
+        long todayCheckIns = reservationRepository.findAll().stream()
+                .filter(r -> r.getCheckInDate() != null && r.getCheckInDate().equals(today)
+                        && r.getStatus() != ReservationStatus.CANCELLED)
+                .count();
+        stats.put("todayCheckIns", todayCheckIns);
+
+        // Today's Check-outs
+        long todayCheckOuts = reservationRepository.findAll().stream()
+                .filter(r -> r.getCheckOutDate() != null && r.getCheckOutDate().equals(today)
+                        && r.getStatus() != ReservationStatus.CANCELLED)
+                .count();
+        stats.put("todayCheckOuts", todayCheckOuts);
+
+        long openComplaints = complaintRepository.countByStatus(ComplaintStatus.OPEN)
+                + complaintRepository.countByStatus(ComplaintStatus.IN_PROGRESS);
+        stats.put("openComplaints", openComplaints);
+
+        // Recent Bookings
+        Pageable topFive = PageRequest.of(0, 5, Sort.by(Sort.Direction.DESC, "createdAt"));
+        Page<Reservation> recentReservations = reservationRepository.findAll(topFive);
+        List<Map<String, Object>> recentBookings = recentReservations.getContent().stream().map(r -> {
+            Map<String, Object> map = new HashMap<>();
+            map.put("id", r.getReservationId());
+            map.put("guest", r.getCustomer().getUser().getFullName());
+            map.put("email", r.getCustomer().getUser().getEmail());
+            map.put("amount", r.getTotalAmount());
+            map.put("date", r.getCreatedAt() != null ? r.getCreatedAt().toString() : "");
+            return map;
+        }).collect(java.util.stream.Collectors.toList());
+        stats.put("recentBookings", recentBookings);
 
         return stats;
     }
@@ -158,15 +206,16 @@ public class AdminService {
 
     public Page<RoomResponse> getAllRooms(RoomFilterRequest filterRequest, Pageable pageable) {
         // Create sort
+        String sortBy = filterRequest.getSortBy() != null ? filterRequest.getSortBy() : "roomNumber";
         Sort sort = Sort.by(
-                "asc".equalsIgnoreCase(filterRequest.getSortOrder()) ? Sort.Direction.ASC : Sort.Direction.DESC,
-                filterRequest.getSortBy());
+                "desc".equalsIgnoreCase(filterRequest.getSortOrder()) ? Sort.Direction.DESC : Sort.Direction.ASC,
+                sortBy);
 
         Pageable sortedPageable = PageRequest.of(pageable.getPageNumber(), pageable.getPageSize(), sort);
 
-        // For now, simple implementation - can be enhanced with Specification for
-        // complex filtering
-        Page<Room> roomsPage = roomRepository.findAll(sortedPageable);
+        org.springframework.data.jpa.domain.Specification<Room> spec = com.hms.repository.specification.RoomSpecification
+                .getFilterSpecification(filterRequest);
+        Page<Room> roomsPage = roomRepository.findAll(spec, sortedPageable);
 
         return roomsPage.map(this::mapToRoomResponse);
     }
@@ -337,5 +386,154 @@ public class AdminService {
         }
 
         return response;
+    }
+
+    // ==========================================
+    // RESERVATION MANAGEMENT (ADMIN)
+    // ==========================================
+
+    @Transactional(readOnly = true)
+    public Page<Reservation> getAllReservations(
+            LocalDate startDate,
+            LocalDate endDate,
+            String roomType,
+            ReservationStatus status,
+            String searchQuery,
+            LocalDate bookingDate,
+            Pageable pageable) {
+
+        // Use standard pagination and dynamically build spec
+        org.springframework.data.jpa.domain.Specification<Reservation> spec = ReservationSpecification
+                .getFilterSpecification(startDate, endDate, roomType, status, searchQuery, bookingDate);
+
+        return reservationRepository.findAll(spec, pageable);
+    }
+
+    @Transactional
+    public Reservation createReservation(AdminCreateReservationRequest request) {
+        // Attempt to find a customer user by email, or create a mock account
+        User user = userRepository.findByEmail(request.getCustomerEmail())
+                .orElseGet(() -> {
+                    User newUser = new User();
+                    newUser.setUserId(idGenerator.generateUserId());
+                    newUser.setUsername(request.getCustomerEmail()); // Using email as username
+                    newUser.setEmail(request.getCustomerEmail());
+                    newUser.setFullName(request.getCustomerName());
+                    newUser.setMobileNumber(request.getCustomerPhone() != null ? request.getCustomerPhone() : "N/A");
+                    newUser.setPassword("admin-created"); // Default mock
+                    newUser.setRole(UserRole.CUSTOMER);
+                    newUser.setStatus(UserStatus.ACTIVE);
+                    return userRepository.save(newUser);
+                });
+
+        Customer customer = customerRepository.findByUser_UserId(user.getUserId())
+                .orElseGet(() -> {
+                    Customer newCustomer = new Customer();
+                    newCustomer.setCustomerId(idGenerator.generateCustomerId());
+                    newCustomer.setUser(user);
+                    newCustomer.setLoyaltyPoints(0);
+                    newCustomer.setTotalBookings(0);
+                    return customerRepository.save(newCustomer);
+                });
+
+        Room room = roomRepository.findById(request.getRoomId())
+                .orElseThrow(() -> new ResourceNotFoundException("Room not found"));
+
+        if (request.getCheckOutDate().isBefore(request.getCheckInDate()) ||
+                request.getCheckOutDate().isEqual(request.getCheckInDate())) {
+            throw new InvalidRequestException("Check-out date must be after the check-in date.");
+        }
+
+        int totalGuests = request.getNumberOfAdults() + request.getNumberOfChildren();
+        if (totalGuests > room.getMaxOccupancy()) {
+            throw new InvalidRequestException("Number of guests exceeds room capacity");
+        }
+
+        List<Reservation> overlappingReservations = reservationRepository.findOverlappingReservations(
+                room.getRoomId(), request.getCheckInDate(), request.getCheckOutDate());
+
+        if (!overlappingReservations.isEmpty()) {
+            throw new InvalidRequestException("Room is already booked for the selected dates.");
+        }
+
+        long numberOfNights = ChronoUnit.DAYS.between(request.getCheckInDate(), request.getCheckOutDate());
+        BigDecimal baseAmount = room.getPricePerNight().multiply(BigDecimal.valueOf(numberOfNights));
+        BigDecimal taxAmount = baseAmount.multiply(new BigDecimal("0.12"));
+        BigDecimal totalAmount = baseAmount.add(taxAmount);
+
+        Reservation reservation = new Reservation();
+        reservation.setReservationId(idGenerator.generateReservationId());
+        reservation.setCustomer(customer);
+        reservation.setRoom(room);
+        reservation.setCheckInDate(request.getCheckInDate());
+        reservation.setCheckOutDate(request.getCheckOutDate());
+        reservation.setNumberOfAdults(request.getNumberOfAdults());
+        reservation.setNumberOfChildren(request.getNumberOfChildren());
+        reservation.setNumberOfNights((int) numberOfNights);
+        reservation.setBaseAmount(baseAmount);
+        reservation.setTaxAmount(taxAmount);
+        reservation.setDiscountAmount(BigDecimal.ZERO);
+        reservation.setTotalAmount(totalAmount);
+        reservation.setStatus(ReservationStatus.CONFIRMED);
+        reservation.setPaymentStatus(PaymentStatus.PAID);
+
+        if (request.getPaymentMethod() != null) {
+            reservation.setPaymentMethod(PaymentMethod.valueOf(request.getPaymentMethod().toUpperCase()));
+        }
+
+        reservation.setSpecialRequests(request.getSpecialRequests());
+
+        return reservationRepository.save(reservation);
+    }
+
+    @Transactional
+    public Reservation updateReservation(String reservationId, ModifyReservationRequest request) {
+        // Reuse the logic from ReservationService since it checks overlap and capacity
+        return reservationService.modifyReservation(reservationId, request);
+    }
+
+    @Transactional
+    public void cancelReservation(String reservationId) {
+        Reservation reservation = reservationRepository.findById(reservationId)
+                .orElseThrow(() -> new ResourceNotFoundException("Reservation not found"));
+
+        if (reservation.getStatus() == ReservationStatus.CHECKED_IN ||
+                reservation.getStatus() == ReservationStatus.CHECKED_OUT ||
+                reservation.getStatus() == ReservationStatus.CANCELLED) {
+            throw new InvalidRequestException(
+                    "Cannot cancel a reservation that is currently checked-in, completed, or already cancelled.");
+        }
+
+        reservation.setStatus(ReservationStatus.CANCELLED);
+        reservation.setCancellationReason("Cancelled by Administrator");
+        reservation.setCancellationDate(java.time.LocalDateTime.now());
+
+        // If it was paid, mark refunded (for simplicity in admin override)
+        if (reservation.getPaymentStatus() == PaymentStatus.PAID) {
+            reservation.setPaymentStatus(PaymentStatus.REFUNDED);
+            reservation.setRefundAmount(reservation.getTotalAmount());
+        }
+
+        reservationRepository.save(reservation);
+    }
+
+    // ==========================================
+    // BILLING MANAGEMENT (ADMIN)
+    // ==========================================
+
+    @Transactional(readOnly = true)
+    public Page<Bill> getAllBills(
+            String searchQuery,
+            LocalDate dateFrom,
+            LocalDate dateTo,
+            PaymentStatus paymentStatus,
+            BigDecimal minAmount,
+            BigDecimal maxAmount,
+            Pageable pageable) {
+
+        org.springframework.data.jpa.domain.Specification<Bill> spec = BillSpecification
+                .getBillsWithFilters(searchQuery, dateFrom, dateTo, paymentStatus, minAmount, maxAmount);
+
+        return billRepository.findAll(spec, pageable);
     }
 }

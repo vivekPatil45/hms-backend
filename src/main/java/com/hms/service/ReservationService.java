@@ -111,20 +111,66 @@ public class ReservationService {
                 .orElseThrow(() -> new ResourceNotFoundException("Reservation not found"));
     }
 
+    @Transactional(readOnly = true)
+    public java.util.Map<String, Object> checkCancellation(String reservationId) {
+        Reservation reservation = getReservationById(reservationId);
+        java.util.Map<String, Object> response = new java.util.HashMap<>();
+
+        if (reservation.getStatus() == ReservationStatus.CHECKED_IN ||
+                reservation.getStatus() == ReservationStatus.CHECKED_OUT ||
+                reservation.getStatus() == ReservationStatus.CANCELLED) {
+            response.put("allowed", false);
+            response.put("message",
+                    "This booking cannot be canceled as it is past the allowed cancellation window or already canceled.");
+            return response;
+        }
+
+        long hoursUntilCheckIn = ChronoUnit.HOURS.between(java.time.LocalDateTime.now(),
+                reservation.getCheckInDate().atStartOfDay());
+
+        if (hoursUntilCheckIn < 0) {
+            response.put("allowed", false);
+            response.put("message", "This booking cannot be canceled as it is past the allowed cancellation window.");
+            return response;
+        }
+
+        BigDecimal refundAmount = calculateRefund(reservation);
+        response.put("allowed", true);
+        response.put("refundAmount", refundAmount);
+        response.put("totalAmount", reservation.getTotalAmount());
+
+        if (hoursUntilCheckIn > 48) {
+            response.put("message",
+                    "Free cancellation. Canceling now will result in a full refund of $" + refundAmount + ".");
+            response.put("refundType", "FULL");
+        } else if (hoursUntilCheckIn >= 24) {
+            response.put("message", "Canceling now will result in a 50% refund ($" + refundAmount
+                    + ") as per the hotel's cancellation policy. Do you want to proceed?");
+            response.put("refundType", "PARTIAL");
+        } else {
+            response.put("message",
+                    "As per the hotel's policy, this booking is non-refundable. You will receive $0 refund.");
+            response.put("refundType", "NONE");
+        }
+
+        return response;
+    }
+
     @Transactional
     public void cancelReservation(String reservationId, String cancellationReason) {
         Reservation reservation = getReservationById(reservationId);
 
-        if (reservation.getStatus() == ReservationStatus.CHECKED_IN ||
-                reservation.getStatus() == ReservationStatus.CHECKED_OUT) {
-            throw new InvalidRequestException("Cannot cancel reservation in current status");
+        java.util.Map<String, Object> check = checkCancellation(reservationId);
+        if (!(Boolean) check.get("allowed")) {
+            throw new InvalidRequestException((String) check.get("message"));
         }
 
-        // Calculate refund based on cancellation policy
-        BigDecimal refundAmount = calculateRefund(reservation);
+        BigDecimal refundAmount = (BigDecimal) check.get("refundAmount");
 
         reservation.setStatus(ReservationStatus.CANCELLED);
-        reservation.setPaymentStatus(PaymentStatus.REFUNDED);
+        if (refundAmount.compareTo(BigDecimal.ZERO) > 0) {
+            reservation.setPaymentStatus(PaymentStatus.REFUNDED);
+        }
         reservation.setCancellationReason(cancellationReason);
         reservation.setCancellationDate(java.time.LocalDateTime.now());
         reservation.setRefundAmount(refundAmount);
@@ -149,13 +195,103 @@ public class ReservationService {
         return reservationRepository.save(reservation);
     }
 
-    private BigDecimal calculateRefund(Reservation reservation) {
-        long daysUntilCheckIn = ChronoUnit.DAYS.between(LocalDate.now(), reservation.getCheckInDate());
+    @Transactional(readOnly = true)
+    public java.util.Map<String, Object> checkModification(String reservationId,
+            com.hms.dto.request.ModifyReservationRequest request) {
+        Reservation reservation = getReservationById(reservationId);
 
-        if (daysUntilCheckIn > 2) {
+        long hoursUntilCheckIn = ChronoUnit.HOURS.between(java.time.LocalDateTime.now(),
+                request.getCheckInDate().atStartOfDay());
+        if (hoursUntilCheckIn < 24) {
+            throw new InvalidRequestException(
+                    "Modifications are not allowed within 24 hours of check-in. Please contact support.");
+        }
+
+        Room room = roomRepository.findById(request.getRoomId())
+                .orElseThrow(() -> new ResourceNotFoundException("Room not found"));
+
+        if (request.getCheckOutDate().isBefore(request.getCheckInDate()) ||
+                request.getCheckOutDate().isEqual(request.getCheckInDate())) {
+            throw new InvalidRequestException("Check-out date must be after the check-in date.");
+        }
+
+        int totalGuests = request.getNumberOfAdults()
+                + (request.getNumberOfChildren() != null ? request.getNumberOfChildren() : 0);
+        if (totalGuests > room.getMaxOccupancy()) {
+            throw new InvalidRequestException("Number of guests exceeds room capacity");
+        }
+
+        List<Reservation> overlapping = reservationRepository.findOverlappingReservationsExcluding(
+                room.getRoomId(), reservation.getReservationId(), request.getCheckInDate(), request.getCheckOutDate());
+
+        if (!overlapping.isEmpty()) {
+            throw new InvalidRequestException(
+                    "The selected room type is fully booked for these dates. Please choose another option.");
+        }
+
+        long numberOfNights = ChronoUnit.DAYS.between(request.getCheckInDate(), request.getCheckOutDate());
+        BigDecimal baseAmount = room.getPricePerNight().multiply(BigDecimal.valueOf(numberOfNights));
+        BigDecimal taxAmount = baseAmount.multiply(TAX_RATE);
+        BigDecimal newTotalAmount = baseAmount.add(taxAmount);
+
+        BigDecimal oldTotalAmount = reservation.getTotalAmount();
+        BigDecimal priceDifference = newTotalAmount.subtract(oldTotalAmount);
+
+        java.util.Map<String, Object> response = new java.util.HashMap<>();
+        response.put("newTotalAmount", newTotalAmount);
+        response.put("priceDifference", priceDifference);
+        response.put("isPriceIncreased", priceDifference.compareTo(BigDecimal.ZERO) > 0);
+        response.put("isPriceDecreased", priceDifference.compareTo(BigDecimal.ZERO) < 0);
+
+        return response;
+    }
+
+    @Transactional
+    public Reservation modifyReservation(String reservationId, com.hms.dto.request.ModifyReservationRequest request) {
+        Reservation reservation = getReservationById(reservationId);
+
+        java.util.Map<String, Object> modificationDetails = checkModification(reservationId, request);
+        BigDecimal priceDifference = (BigDecimal) modificationDetails.get("priceDifference");
+        BigDecimal newTotalAmount = (BigDecimal) modificationDetails.get("newTotalAmount");
+
+        Room room = roomRepository.findById(request.getRoomId())
+                .orElseThrow(() -> new ResourceNotFoundException("Room not found"));
+
+        long numberOfNights = ChronoUnit.DAYS.between(request.getCheckInDate(), request.getCheckOutDate());
+        BigDecimal baseAmount = room.getPricePerNight().multiply(BigDecimal.valueOf(numberOfNights));
+        BigDecimal taxAmount = baseAmount.multiply(TAX_RATE);
+
+        reservation.setRoom(room);
+        reservation.setCheckInDate(request.getCheckInDate());
+        reservation.setCheckOutDate(request.getCheckOutDate());
+        reservation.setNumberOfAdults(request.getNumberOfAdults());
+        reservation.setNumberOfChildren(request.getNumberOfChildren() != null ? request.getNumberOfChildren() : 0);
+        reservation.setNumberOfNights((int) numberOfNights);
+        reservation.setBaseAmount(baseAmount);
+        reservation.setTaxAmount(taxAmount);
+        reservation.setTotalAmount(newTotalAmount);
+        reservation.setSpecialRequests(request.getSpecialRequests());
+
+        if (priceDifference.compareTo(BigDecimal.ZERO) > 0) {
+            reservation.setPaymentStatus(PaymentStatus.PENDING);
+            reservation.setStatus(ReservationStatus.PENDING_PAYMENT);
+        } else if (priceDifference.compareTo(BigDecimal.ZERO) < 0) {
+            // Price decreased, update payment record or just leave as PAID since they
+            // overpaid
+            // We can process a refund offline.
+        }
+
+        return reservationRepository.save(reservation);
+    }
+
+    private BigDecimal calculateRefund(Reservation reservation) {
+        long hoursUntilCheckIn = ChronoUnit.HOURS.between(java.time.LocalDateTime.now(),
+                reservation.getCheckInDate().atStartOfDay());
+
+        if (hoursUntilCheckIn > 48) {
             // Free cancellation if > 48 hours
             return reservation.getTotalAmount();
-        } else if (daysUntilCheckIn >= 1) {
+        } else if (hoursUntilCheckIn >= 24) {
             // 50% refund if 24-48 hours
             return reservation.getTotalAmount().multiply(new BigDecimal("0.5"));
         } else {

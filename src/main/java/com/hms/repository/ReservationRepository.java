@@ -12,8 +12,11 @@ import org.springframework.stereotype.Repository;
 import java.time.LocalDate;
 import java.util.List;
 
+import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
+
 @Repository
-public interface ReservationRepository extends JpaRepository<Reservation, String> {
+public interface ReservationRepository
+                extends JpaRepository<Reservation, String>, JpaSpecificationExecutor<Reservation> {
         List<Reservation> findByCustomer_CustomerId(String customerId);
 
         Page<Reservation> findByCustomer_CustomerId(String customerId, Pageable pageable);
@@ -53,6 +56,16 @@ public interface ReservationRepository extends JpaRepository<Reservation, String
                         "AND ((:checkInDate < r.checkOutDate) AND (:checkOutDate > r.checkInDate))")
         List<Reservation> findOverlappingReservations(
                         @Param("roomId") String roomId,
+                        @Param("checkInDate") LocalDate checkInDate,
+                        @Param("checkOutDate") LocalDate checkOutDate);
+
+        @Query("SELECT r FROM Reservation r WHERE r.room.roomId = :roomId " +
+                        "AND r.reservationId <> :excludeReservationId " +
+                        "AND r.status <> 'CANCELLED' " +
+                        "AND ((:checkInDate < r.checkOutDate) AND (:checkOutDate > r.checkInDate))")
+        List<Reservation> findOverlappingReservationsExcluding(
+                        @Param("roomId") String roomId,
+                        @Param("excludeReservationId") String excludeReservationId,
                         @Param("checkInDate") LocalDate checkInDate,
                         @Param("checkOutDate") LocalDate checkOutDate);
 }

@@ -7,13 +7,19 @@ import com.hms.dto.request.ResolveComplaintRequest;
 import com.hms.dto.request.RoomFilterRequest;
 import com.hms.dto.request.UpdateComplaintStatusRequest;
 import com.hms.dto.request.UpdateRoomRequest;
+import com.hms.dto.request.AdminCreateReservationRequest;
+import com.hms.dto.request.ModifyReservationRequest;
 import com.hms.dto.response.ApiResponse;
 import com.hms.dto.response.RoomResponse;
+import com.hms.entity.Reservation;
+import com.hms.enums.ReservationStatus;
 import com.hms.entity.Complaint;
 import com.hms.entity.User;
 import com.hms.enums.ComplaintCategory;
 import com.hms.enums.ComplaintPriority;
 import com.hms.enums.ComplaintStatus;
+import com.hms.entity.Bill;
+import com.hms.enums.PaymentStatus;
 import com.hms.repository.UserRepository;
 import com.hms.service.AdminService;
 import com.hms.service.ComplaintService;
@@ -60,6 +66,10 @@ public class AdminController {
                         @RequestParam(required = false) String minPrice,
                         @RequestParam(required = false) String maxPrice,
                         @RequestParam(required = false) Boolean availability,
+                        @RequestParam(required = false) List<String> amenities,
+                        @RequestParam(required = false) Integer maxOccupancy,
+                        @RequestParam(required = false) String availabilityDate,
+                        @RequestParam(required = false) String q,
                         @RequestParam(required = false) String sortBy,
                         @RequestParam(required = false) String sortOrder,
                         @RequestParam(defaultValue = "0") int page,
@@ -67,9 +77,25 @@ public class AdminController {
 
                 // Build filter request
                 RoomFilterRequest filterRequest = new RoomFilterRequest();
-                if (sortBy != null)
+                if (roomType != null && !roomType.isEmpty())
+                        filterRequest.setRoomType(com.hms.enums.RoomType.valueOf(roomType));
+                if (minPrice != null && !minPrice.isEmpty())
+                        filterRequest.setMinPrice(new java.math.BigDecimal(minPrice));
+                if (maxPrice != null && !maxPrice.isEmpty())
+                        filterRequest.setMaxPrice(new java.math.BigDecimal(maxPrice));
+                if (availability != null)
+                        filterRequest.setAvailability(availability);
+                if (amenities != null && !amenities.isEmpty())
+                        filterRequest.setAmenities(amenities);
+                if (maxOccupancy != null)
+                        filterRequest.setMaxOccupancy(maxOccupancy);
+                if (availabilityDate != null && !availabilityDate.isEmpty())
+                        filterRequest.setAvailabilityDate(LocalDate.parse(availabilityDate));
+                if (q != null && !q.isEmpty())
+                        filterRequest.setSearchQuery(q);
+                if (sortBy != null && !sortBy.isEmpty())
                         filterRequest.setSortBy(sortBy);
-                if (sortOrder != null)
+                if (sortOrder != null && !sortOrder.isEmpty())
                         filterRequest.setSortOrder(sortOrder);
 
                 Pageable pageable = PageRequest.of(page, size);
@@ -191,6 +217,65 @@ public class AdminController {
                                 result);
 
                 return ResponseEntity.ok(response);
+        }
+
+        // ============ RESERVATION MANAGEMENT ENDPOINTS ============
+
+        @GetMapping("/reservations")
+        public ResponseEntity<ApiResponse<Map<String, Object>>> getAllReservations(
+                        @RequestParam(required = false) String dateFrom,
+                        @RequestParam(required = false) String dateTo,
+                        @RequestParam(required = false) String roomType,
+                        @RequestParam(required = false) String status,
+                        @RequestParam(required = false) String q,
+                        @RequestParam(required = false) String bookingDate,
+                        @RequestParam(defaultValue = "0") int page,
+                        @RequestParam(defaultValue = "10") int size) {
+
+                LocalDate startDate = dateFrom != null && !dateFrom.isEmpty() ? LocalDate.parse(dateFrom) : null;
+                LocalDate endDate = dateTo != null && !dateTo.isEmpty() ? LocalDate.parse(dateTo) : null;
+                ReservationStatus reservationStatus = status != null && !status.isEmpty()
+                                ? ReservationStatus.valueOf(status.toUpperCase())
+                                : null;
+                LocalDate parsedBookingDate = bookingDate != null && !bookingDate.isEmpty()
+                                ? LocalDate.parse(bookingDate)
+                                : null;
+
+                Pageable pageable = PageRequest.of(page, size);
+                Page<Reservation> reservationPage = adminService.getAllReservations(
+                                startDate, endDate, roomType, reservationStatus, q, parsedBookingDate, pageable);
+
+                Map<String, Object> data = new HashMap<>();
+                data.put("content", reservationPage.getContent());
+                data.put("page", reservationPage.getNumber());
+                data.put("size", reservationPage.getSize());
+                data.put("totalElements", reservationPage.getTotalElements());
+                data.put("totalPages", reservationPage.getTotalPages());
+
+                return ResponseEntity.ok(ApiResponse.success("Reservations retrieved successfully", data));
+        }
+
+        @PostMapping("/reservations")
+        public ResponseEntity<ApiResponse<Reservation>> createReservation(
+                        @Valid @RequestBody AdminCreateReservationRequest request) {
+
+                Reservation reservation = adminService.createReservation(request);
+                return ResponseEntity.ok(ApiResponse.success("Reservation created successfully", reservation));
+        }
+
+        @PutMapping("/reservations/{reservationId}")
+        public ResponseEntity<ApiResponse<Reservation>> updateReservation(
+                        @PathVariable String reservationId,
+                        @Valid @RequestBody ModifyReservationRequest request) {
+
+                Reservation reservation = adminService.updateReservation(reservationId, request);
+                return ResponseEntity.ok(ApiResponse.success("Reservation updated successfully", reservation));
+        }
+
+        @PutMapping("/reservations/{reservationId}/cancel")
+        public ResponseEntity<ApiResponse<String>> cancelReservation(@PathVariable String reservationId) {
+                adminService.cancelReservation(reservationId);
+                return ResponseEntity.ok(ApiResponse.success("Reservation cancelled successfully", null));
         }
 
         // ============ COMPLAINT MANAGEMENT ENDPOINTS ============
@@ -347,5 +432,52 @@ public class AdminController {
                                 complaint);
 
                 return ResponseEntity.ok(response);
+        }
+
+        // ============ BILLING MANAGEMENT ENDPOINTS ============
+
+        @GetMapping("/bills")
+        public ResponseEntity<ApiResponse<Map<String, Object>>> getAllBills(
+                        @RequestParam(required = false) String q,
+                        @RequestParam(required = false) String dateFrom,
+                        @RequestParam(required = false) String dateTo,
+                        @RequestParam(required = false) String paymentStatus,
+                        @RequestParam(required = false) String minAmount,
+                        @RequestParam(required = false) String maxAmount,
+                        @RequestParam(defaultValue = "0") int page,
+                        @RequestParam(defaultValue = "10") int size,
+                        @RequestParam(required = false, defaultValue = "createdAt") String sortBy,
+                        @RequestParam(required = false, defaultValue = "desc") String sortOrder) {
+
+                LocalDate parsedDateFrom = dateFrom != null && !dateFrom.isEmpty() ? LocalDate.parse(dateFrom) : null;
+                LocalDate parsedDateTo = dateTo != null && !dateTo.isEmpty() ? LocalDate.parse(dateTo) : null;
+                PaymentStatus parsedStatus = paymentStatus != null && !paymentStatus.isEmpty()
+                                ? PaymentStatus.valueOf(paymentStatus.toUpperCase())
+                                : null;
+                java.math.BigDecimal parsedMinAmount = minAmount != null && !minAmount.isEmpty()
+                                ? new java.math.BigDecimal(minAmount)
+                                : null;
+                java.math.BigDecimal parsedMaxAmount = maxAmount != null && !maxAmount.isEmpty()
+                                ? new java.math.BigDecimal(maxAmount)
+                                : null;
+
+                org.springframework.data.domain.Sort sort = org.springframework.data.domain.Sort.by(
+                                "desc".equalsIgnoreCase(sortOrder) ? org.springframework.data.domain.Sort.Direction.DESC
+                                                : org.springframework.data.domain.Sort.Direction.ASC,
+                                sortBy);
+                Pageable pageable = PageRequest.of(page, size, sort);
+
+                Page<Bill> billsPage = adminService.getAllBills(
+                                q, parsedDateFrom, parsedDateTo, parsedStatus, parsedMinAmount, parsedMaxAmount,
+                                pageable);
+
+                Map<String, Object> data = new HashMap<>();
+                data.put("content", billsPage.getContent());
+                data.put("page", billsPage.getNumber());
+                data.put("size", billsPage.getSize());
+                data.put("totalElements", billsPage.getTotalElements());
+                data.put("totalPages", billsPage.getTotalPages());
+
+                return ResponseEntity.ok(ApiResponse.success("Bills retrieved successfully", data));
         }
 }
