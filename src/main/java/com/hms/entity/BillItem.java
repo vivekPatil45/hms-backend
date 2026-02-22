@@ -21,6 +21,8 @@ public class BillItem {
     @Enumerated(EnumType.STRING)
     private BillItemCategory category;
 
+    private java.time.LocalDateTime serviceDate;
+
     private Integer quantity;
     private BigDecimal unitPrice;
     private BigDecimal totalPrice;

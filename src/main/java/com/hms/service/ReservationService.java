@@ -30,6 +30,7 @@ public class ReservationService {
     private final RoomRepository roomRepository;
     private final com.hms.repository.UserRepository userRepository; // Inject UserRepository
     private final IdGenerator idGenerator;
+    private final BillService billService;
 
     private static final BigDecimal TAX_RATE = new BigDecimal("0.12"); // 12% tax
 
@@ -103,7 +104,12 @@ public class ReservationService {
         reservation.setPaymentStatus(PaymentStatus.PENDING);
         reservation.setSpecialRequests(request.getSpecialRequests());
 
-        return reservationRepository.save(reservation);
+        Reservation savedReservation = reservationRepository.save(reservation);
+
+        // Auto-generate bill for the admin to view
+        billService.generateBill(savedReservation.getReservationId());
+
+        return savedReservation;
     }
 
     public Reservation getReservationById(String reservationId) {
@@ -192,7 +198,14 @@ public class ReservationService {
         reservation.setTransactionId(transactionId);
         reservation.setStatus(ReservationStatus.CONFIRMED);
 
-        return reservationRepository.save(reservation);
+        Reservation savedReservation = reservationRepository.save(reservation);
+
+        com.hms.entity.Bill bill = billService.getBillByReservationId(reservationId);
+        if (bill != null) {
+            billService.updatePayment(bill.getBillId(), savedReservation.getTotalAmount(), paymentMethod);
+        }
+
+        return savedReservation;
     }
 
     @Transactional(readOnly = true)

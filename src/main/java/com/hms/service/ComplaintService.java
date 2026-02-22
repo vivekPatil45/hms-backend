@@ -18,11 +18,8 @@ import com.hms.repository.ReservationRepository;
 import com.hms.repository.UserRepository;
 import com.hms.util.IdGenerator;
 import lombok.RequiredArgsConstructor;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -139,6 +136,34 @@ public class ComplaintService {
         return complaintRepository.save(complaint);
     }
 
+    @Transactional
+    public Complaint updateComplaint(String complaintId, String userId, ComplaintRequest request) {
+        Customer customer = customerRepository.findByUser_UserId(userId)
+                .orElseThrow(() -> new ResourceNotFoundException("Customer profile not found"));
+
+        Complaint complaint = complaintRepository.findById(complaintId)
+                .orElseThrow(() -> new ResourceNotFoundException("Complaint not found"));
+
+        // Security check
+        if (!complaint.getCustomer().getCustomerId().equals(customer.getCustomerId())) {
+            throw new ResourceNotFoundException("Complaint not found");
+        }
+
+        // Only allow editing "OPEN" complaints
+        if (complaint.getStatus() != ComplaintStatus.OPEN) {
+            throw new IllegalStateException("Only complaints with 'OPEN' status can be edited.");
+        }
+
+        complaint.setCategory(request.getCategory());
+        complaint.setTitle(request.getTitle());
+        complaint.setDescription(request.getDescription());
+        complaint.setBookingId(request.getReservationId());
+        complaint.setContactPreference(request.getContactPreference());
+        complaint.setPriority(determinePriority(request));
+
+        return complaintRepository.save(complaint);
+    }
+
     // ============ ADMIN METHODS ============
 
     public List<Complaint> getAllComplaints() {
@@ -146,8 +171,8 @@ public class ComplaintService {
     }
 
     public List<Complaint> searchComplaints(ComplaintStatus status, ComplaintCategory category,
-            ComplaintPriority priority, LocalDate dateFrom) {
-        return complaintRepository.searchComplaints(status, category, priority, dateFrom);
+            ComplaintPriority priority, LocalDate dateFrom, LocalDate dateTo, String search) {
+        return complaintRepository.searchComplaints(status, category, priority, dateFrom, dateTo, search);
     }
 
     public Complaint getComplaintByIdAdmin(String complaintId) {

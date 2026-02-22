@@ -24,12 +24,18 @@ public interface ComplaintRepository extends JpaRepository<Complaint, String> {
                         "(:status IS NULL OR c.status = :status) AND " +
                         "(:category IS NULL OR c.category = :category) AND " +
                         "(:priority IS NULL OR c.priority = :priority) AND " +
-                        "(:dateFrom IS NULL OR c.createdAt >= :dateFrom)")
+                        "(:dateFrom IS NULL OR CAST(c.createdAt AS date) >= :dateFrom) AND " +
+                        "(:dateTo IS NULL OR CAST(c.createdAt AS date) <= :dateTo) AND " +
+                        "(:search IS NULL OR LOWER(c.complaintId) LIKE LOWER(CONCAT('%', :search, '%')) OR " +
+                        "LOWER(c.customer.user.fullName) LIKE LOWER(CONCAT('%', :search, '%')) OR " +
+                        "LOWER(c.customer.customerId) LIKE LOWER(CONCAT('%', :search, '%')))")
         List<Complaint> searchComplaints(
                         @Param("status") ComplaintStatus status,
                         @Param("category") ComplaintCategory category,
                         @Param("priority") ComplaintPriority priority,
-                        @Param("dateFrom") LocalDate dateFrom);
+                        @Param("dateFrom") LocalDate dateFrom,
+                        @Param("dateTo") LocalDate dateTo,
+                        @Param("search") String search);
 
         long countByStatus(ComplaintStatus status);
 }

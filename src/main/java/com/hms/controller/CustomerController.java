@@ -430,4 +430,18 @@ public class CustomerController {
                                         "Unable to fetch complaint status. Please try again later.");
                 }
         }
+
+        @PutMapping("/complaints/{complaintId}")
+        public ResponseEntity<ApiResponse<Complaint>> updateComplaint(
+                        @PathVariable String complaintId,
+                        @Valid @RequestBody ComplaintRequest request,
+                        Authentication authentication) {
+                UserDetails userDetails = (UserDetails) authentication.getPrincipal();
+                User user = userRepository.findByUsername(userDetails.getUsername())
+                                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found"));
+
+                Complaint updated = complaintService.updateComplaint(complaintId, user.getUserId(), request);
+
+                return ResponseEntity.ok(ApiResponse.success("Complaint updated successfully", updated));
+        }
 }

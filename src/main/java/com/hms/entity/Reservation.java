@@ -95,5 +95,6 @@ public class Reservation {
     private LocalDateTime updatedAt;
 
     @OneToOne(mappedBy = "reservation", cascade = CascadeType.ALL)
+    @com.fasterxml.jackson.annotation.JsonIgnoreProperties("reservation")
     private Bill bill;
 }

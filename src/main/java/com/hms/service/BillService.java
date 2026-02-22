@@ -141,4 +141,58 @@ public class BillService {
 
         return billRepository.save(bill);
     }
+
+    @Transactional
+    public Bill removeItemFromBill(String billId, String itemId) {
+        Bill bill = getBillById(billId);
+
+        if (bill.getPaymentStatus() == PaymentStatus.PAID) {
+            throw new InvalidRequestException("Cannot remove items from a paid bill");
+        }
+
+        boolean removed = bill.getItems().removeIf(item -> item.getItemId().equals(itemId));
+        if (!removed) {
+            throw new ResourceNotFoundException("Item not found in bill");
+        }
+
+        // Use updateBillMetrics trick to easily recalculate everything
+        return updateBillMetrics(billId, bill.getTaxRate(), bill.getDiscountAmount());
+    }
+
+    @Transactional
+    public Bill updateBillMetrics(String billId, BigDecimal taxRate, BigDecimal discountAmount) {
+        Bill bill = getBillById(billId);
+
+        if (bill.getPaymentStatus() == PaymentStatus.PAID) {
+            throw new InvalidRequestException("Cannot modify metrics of a paid bill");
+        }
+
+        if (taxRate != null) {
+            bill.setTaxRate(taxRate);
+        }
+        if (discountAmount != null) {
+            bill.setDiscountAmount(discountAmount);
+        }
+
+        // Recalculate based on current items
+        BigDecimal subtotal = bill.getItems().stream()
+                .map(BillItem::getTotalPrice)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        bill.setSubtotal(subtotal);
+        bill.setTaxAmount(subtotal.multiply(bill.getTaxRate().divide(new BigDecimal("100"))));
+
+        // Ensure discount doesn't exceed subtotal+tax
+        BigDecimal totalBeforeDiscount = subtotal.add(bill.getTaxAmount());
+        if (bill.getDiscountAmount().compareTo(totalBeforeDiscount) > 0) {
+            bill.setDiscountAmount(totalBeforeDiscount);
+        }
+
+        bill.setTotalAmount(totalBeforeDiscount.subtract(bill.getDiscountAmount()));
+
+        // Ensure balance is correct based on total amount and paid amount
+        bill.setBalanceAmount(bill.getTotalAmount().subtract(bill.getPaidAmount()));
+
+        return billRepository.save(bill);
+    }
 }

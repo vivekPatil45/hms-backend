@@ -55,6 +55,7 @@ public class AdminService {
     private final CustomerRepository customerRepository;
     private final ReservationService reservationService;
     private final BillRepository billRepository;
+    private final BillService billService;
     private final IdGenerator idGenerator;
 
     public Map<String, Object> getDashboardStatistics() {
@@ -75,6 +76,25 @@ public class AdminService {
         stats.put("totalBookings", totalBookings);
 
         LocalDate today = LocalDate.now();
+
+        // Calculate Daily, Weekly, Monthly bookings based on createdAt
+        long dailyBookings = reservationRepository.findAll().stream()
+                .filter(r -> r.getCreatedAt() != null && r.getCreatedAt().toLocalDate().isEqual(today))
+                .count();
+
+        LocalDate oneWeekAgo = today.minusDays(7);
+        long weeklyBookings = reservationRepository.findAll().stream()
+                .filter(r -> r.getCreatedAt() != null && !r.getCreatedAt().toLocalDate().isBefore(oneWeekAgo))
+                .count();
+
+        LocalDate startOfMonth = today.withDayOfMonth(1);
+        long monthlyBookings = reservationRepository.findAll().stream()
+                .filter(r -> r.getCreatedAt() != null && !r.getCreatedAt().toLocalDate().isBefore(startOfMonth))
+                .count();
+
+        stats.put("dailyBookings", dailyBookings);
+        stats.put("weeklyBookings", weeklyBookings);
+        stats.put("monthlyBookings", monthlyBookings);
 
         // Revenue: Sum of totalAmount for CONFIRMED/PAID reservations
         List<Reservation> confirmedReservations = reservationRepository.findByStatus(ReservationStatus.CONFIRMED);
@@ -483,7 +503,19 @@ public class AdminService {
 
         reservation.setSpecialRequests(request.getSpecialRequests());
 
-        return reservationRepository.save(reservation);
+        Reservation savedReservation = reservationRepository.save(reservation);
+
+        // Auto-generate bill for the admin to view
+        billService.generateBill(savedReservation.getReservationId());
+
+        // If it's already PAID per admin request, update the bill
+        if (savedReservation.getPaymentStatus() == PaymentStatus.PAID) {
+            com.hms.entity.Bill bill = billService.getBillByReservationId(savedReservation.getReservationId());
+            billService.updatePayment(bill.getBillId(), savedReservation.getTotalAmount(),
+                    savedReservation.getPaymentMethod());
+        }
+
+        return savedReservation;
     }
 
     @Transactional

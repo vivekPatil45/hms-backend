@@ -22,6 +22,7 @@ import com.hms.entity.Bill;
 import com.hms.enums.PaymentStatus;
 import com.hms.repository.UserRepository;
 import com.hms.service.AdminService;
+import com.hms.service.BillService;
 import com.hms.service.ComplaintService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -47,6 +48,7 @@ public class AdminController {
 
         private final AdminService adminService;
         private final ComplaintService complaintService;
+        private final BillService billService;
         private final UserRepository userRepository;
 
         @GetMapping("/dashboard")
@@ -198,8 +200,12 @@ public class AdminController {
                                 "STANDARD,SINGLE,100.00,WiFi;TV,1,Standard Room,1,200.0,CITY,true\n" +
                                 "DELUXE,DOUBLE,200.00,WiFi;TV;AC,2,Deluxe Room,2,350.0,GARDEN,true";
 
+                byte[] csvBytes = csvContent.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                if (csvBytes == null) {
+                        throw new RuntimeException("Could not generate CSV bytes");
+                }
                 org.springframework.core.io.ByteArrayResource resource = new org.springframework.core.io.ByteArrayResource(
-                                csvContent.getBytes());
+                                csvBytes);
 
                 return ResponseEntity.ok()
                                 .header(org.springframework.http.HttpHeaders.CONTENT_DISPOSITION,
@@ -296,22 +302,28 @@ public class AdminController {
                         @RequestParam(required = false) String status,
                         @RequestParam(required = false) String category,
                         @RequestParam(required = false) String priority,
-                        @RequestParam(required = false) String dateFrom) {
+                        @RequestParam(required = false) String dateFrom,
+                        @RequestParam(required = false) String dateTo,
+                        @RequestParam(required = false) String search) {
 
-                List<Complaint> complaints;
+                ComplaintStatus statusEnum = (status != null && !status.isEmpty()) ? ComplaintStatus.valueOf(status)
+                                : null;
+                ComplaintCategory categoryEnum = (category != null && !category.isEmpty())
+                                ? ComplaintCategory.valueOf(category)
+                                : null;
+                ComplaintPriority priorityEnum = (priority != null && !priority.isEmpty())
+                                ? ComplaintPriority.valueOf(priority)
+                                : null;
+                LocalDate dateFromParsed = (dateFrom != null && !dateFrom.isEmpty()) ? LocalDate.parse(dateFrom) : null;
+                LocalDate dateToParsed = (dateTo != null && !dateTo.isEmpty()) ? LocalDate.parse(dateTo) : null;
 
-                // If any filter is provided, use search
-                if (status != null || category != null || priority != null || dateFrom != null) {
-                        ComplaintStatus statusEnum = status != null ? ComplaintStatus.valueOf(status) : null;
-                        ComplaintCategory categoryEnum = category != null ? ComplaintCategory.valueOf(category) : null;
-                        ComplaintPriority priorityEnum = priority != null ? ComplaintPriority.valueOf(priority) : null;
-                        LocalDate dateFromParsed = dateFrom != null ? LocalDate.parse(dateFrom) : null;
-
-                        complaints = complaintService.searchComplaints(statusEnum, categoryEnum, priorityEnum,
-                                        dateFromParsed);
-                } else {
-                        complaints = complaintService.getAllComplaints();
-                }
+                List<Complaint> complaints = complaintService.searchComplaints(
+                                statusEnum,
+                                categoryEnum,
+                                priorityEnum,
+                                dateFromParsed,
+                                dateToParsed,
+                                search);
 
                 ApiResponse<List<Complaint>> response = ApiResponse.success(
                                 "Complaints retrieved successfully",
@@ -479,5 +491,60 @@ public class AdminController {
                 data.put("totalPages", billsPage.getTotalPages());
 
                 return ResponseEntity.ok(ApiResponse.success("Bills retrieved successfully", data));
+        }
+
+        @PostMapping("/bills/generate/{reservationId}")
+        public ResponseEntity<ApiResponse<Bill>> generateBill(@PathVariable String reservationId) {
+                Bill bill = billService.generateBill(reservationId);
+                return ResponseEntity.ok(ApiResponse.success("Bill generated successfully", bill));
+        }
+
+        @PutMapping("/bills/{billId}/metrics")
+        public ResponseEntity<ApiResponse<Bill>> updateBillMetrics(
+                        @PathVariable String billId,
+                        @RequestBody java.util.Map<String, Object> request) {
+
+                java.math.BigDecimal taxRate = null;
+                java.math.BigDecimal discountAmount = null;
+
+                if (request.containsKey("taxRate") && request.get("taxRate") != null) {
+                        taxRate = new java.math.BigDecimal(request.get("taxRate").toString());
+                }
+                if (request.containsKey("discountAmount") && request.get("discountAmount") != null) {
+                        discountAmount = new java.math.BigDecimal(request.get("discountAmount").toString());
+                }
+
+                Bill bill = billService.updateBillMetrics(billId, taxRate, discountAmount);
+                return ResponseEntity.ok(ApiResponse.success("Bill metrics updated successfully", bill));
+        }
+
+        @PostMapping("/bills/{billId}/items")
+        public ResponseEntity<ApiResponse<Bill>> addBillItem(
+                        @PathVariable String billId,
+                        @RequestBody com.hms.entity.BillItem item) {
+
+                Bill bill = billService.addItemToBill(billId, item);
+                return ResponseEntity.ok(ApiResponse.success("Item added to bill successfully", bill));
+        }
+
+        @DeleteMapping("/bills/{billId}/items/{itemId}")
+        public ResponseEntity<ApiResponse<Bill>> removeBillItem(
+                        @PathVariable String billId,
+                        @PathVariable String itemId) {
+                Bill bill = billService.removeItemFromBill(billId, itemId);
+                return ResponseEntity.ok(ApiResponse.success("Item removed from bill successfully", bill));
+        }
+
+        @PostMapping("/bills/{billId}/pay")
+        public ResponseEntity<ApiResponse<Bill>> markBillAsPaid(
+                        @PathVariable String billId,
+                        @RequestBody java.util.Map<String, Object> request) {
+
+                java.math.BigDecimal amount = new java.math.BigDecimal(request.get("amount").toString());
+                String method = request.containsKey("paymentMethod") ? request.get("paymentMethod").toString() : "CASH";
+                com.hms.enums.PaymentMethod paymentMethod = com.hms.enums.PaymentMethod.valueOf(method);
+
+                Bill bill = billService.updatePayment(billId, amount, paymentMethod);
+                return ResponseEntity.ok(ApiResponse.success("Payment recorded successfully", bill));
         }
 }
