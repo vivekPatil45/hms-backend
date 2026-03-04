@@ -280,7 +280,7 @@ public class AdminService {
                 List.of(ReservationStatus.CONFIRMED, ReservationStatus.CHECKED_IN));
 
         return reservations.stream()
-                .anyMatch(res -> !res.getCheckOutDate().isBefore(today));
+                .anyMatch(res -> !res.getCheckInDate().isAfter(today) && !res.getCheckOutDate().isBefore(today));
     }
 
     public Map<String, Object> bulkImportRooms(org.springframework.web.multipart.MultipartFile file) {
@@ -521,7 +521,8 @@ public class AdminService {
     @Transactional
     public Reservation updateReservation(String reservationId, ModifyReservationRequest request) {
         // Reuse the logic from ReservationService since it checks overlap and capacity
-        return reservationService.modifyReservation(reservationId, request);
+        // Pass isAdmin=true to bypass the 24-hour lock
+        return reservationService.modifyReservation(reservationId, request, true);
     }
 
     @Transactional
@@ -547,6 +548,20 @@ public class AdminService {
         }
 
         reservationRepository.save(reservation);
+
+        // Update Bill
+        try {
+            com.hms.entity.Bill bill = billService.getBillByReservationId(reservationId);
+            if (bill != null) {
+                if (reservation.getPaymentStatus() == PaymentStatus.REFUNDED
+                        || reservation.getPaymentStatus() == PaymentStatus.PARTIAL) {
+                    billService.updateBillStatus(bill.getBillId(), reservation.getPaymentStatus());
+                } else if (reservation.getPaymentStatus() == PaymentStatus.PENDING) {
+                    billService.updateBillStatus(bill.getBillId(), PaymentStatus.FAILED);
+                }
+            }
+        } catch (Exception e) {
+        }
     }
 
     // ==========================================

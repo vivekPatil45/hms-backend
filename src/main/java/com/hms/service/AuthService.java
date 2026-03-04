@@ -70,7 +70,7 @@ public class AuthService {
         user.setMobileNumber(request.getMobileNumber());
         user.setAddress(request.getAddress());
         user.setRole(UserRole.CUSTOMER);
-        user.setStatus(UserStatus.INACTIVE); // Customer must be activated by admin
+        user.setStatus(UserStatus.ACTIVE); // Customer must be activated by admin
         user.setFailedLoginAttempts(0);
         user.setRequirePasswordChange(false); // Customer chose their own password
 
@@ -177,7 +177,7 @@ public class AuthService {
         adminUser.setEmail("admin@hotel.com");
         adminUser.setPassword(passwordEncoder.encode("admin123"));
         adminUser.setFullName("Demo Admin");
-        adminUser.setMobileNumber("+91-0000000000");
+        adminUser.setMobileNumber("+91-8888888888");
         adminUser.setAddress("Hotel Address");
         adminUser.setRole(UserRole.ADMIN);
         adminUser.setStatus(UserStatus.ACTIVE);

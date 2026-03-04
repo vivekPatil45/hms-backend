@@ -195,4 +195,72 @@ public class BillService {
 
         return billRepository.save(bill);
     }
+
+    @Transactional
+    public void updateBillStatus(String billId, PaymentStatus status) {
+        Bill bill = getBillById(billId);
+        bill.setPaymentStatus(status);
+        billRepository.save(bill);
+    }
+
+    @Transactional
+    public Bill syncBillWithReservation(Reservation reservation) {
+        Bill bill;
+        try {
+            bill = getBillByReservationId(reservation.getReservationId());
+        } catch (ResourceNotFoundException e) {
+            return null; // No bill exists yet
+        }
+
+        // 1. Update the Room Charge BillItem to match new duration/rates
+        bill.getItems().stream()
+                .filter(item -> item.getCategory() == BillItemCategory.ROOM)
+                .findFirst()
+                .ifPresent(roomCharge -> {
+                    roomCharge.setDescription("Room Charge - " + reservation.getNumberOfNights() + " Nights");
+                    roomCharge.setQuantity(reservation.getNumberOfNights());
+                    roomCharge.setUnitPrice(reservation.getRoom().getPricePerNight());
+                    roomCharge.setTotalPrice(reservation.getBaseAmount());
+                });
+
+        // 2. Recalculate Subtotal, Tax, Final Total, and Balance
+        // We defer to updateBillMetrics to confidently tally all BillItems alongside
+        // new tax rates
+        // Wait, updateBillMetrics takes billId, taxRate, discountAmount.
+        // It's better to manually calculate here using the reservation amounts since
+        // tax rate might be fixed
+        // or just rely on the reservation's passed-in totals. Let's sync with
+        // reservation amounts directly for consistency:
+
+        BigDecimal subtotal = bill.getItems().stream()
+                .map(BillItem::getTotalPrice)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        bill.setSubtotal(subtotal);
+        bill.setTaxAmount(reservation.getTaxAmount()); // Syncing tax purely with reservation's calculated tax
+
+        BigDecimal totalBeforeDiscount = subtotal.add(bill.getTaxAmount());
+
+        // Ensure discount doesn't exceed new subtotal + tax
+        if (bill.getDiscountAmount().compareTo(totalBeforeDiscount) > 0) {
+            bill.setDiscountAmount(totalBeforeDiscount);
+        }
+
+        bill.setTotalAmount(totalBeforeDiscount.subtract(bill.getDiscountAmount()));
+        bill.setBalanceAmount(bill.getTotalAmount().subtract(bill.getPaidAmount()));
+
+        // Check if balance forces a payment status update
+        if (bill.getBalanceAmount().compareTo(BigDecimal.ZERO) == 0
+                && bill.getTotalAmount().compareTo(BigDecimal.ZERO) > 0) {
+            bill.setPaymentStatus(PaymentStatus.PAID);
+        } else if (bill.getPaidAmount().compareTo(BigDecimal.ZERO) > 0
+                && bill.getBalanceAmount().compareTo(BigDecimal.ZERO) > 0) {
+            bill.setPaymentStatus(PaymentStatus.PARTIAL);
+        } else if (bill.getPaidAmount().compareTo(BigDecimal.ZERO) == 0
+                && bill.getTotalAmount().compareTo(BigDecimal.ZERO) > 0) {
+            bill.setPaymentStatus(PaymentStatus.PENDING);
+        }
+
+        return billRepository.save(bill);
+    }
 }

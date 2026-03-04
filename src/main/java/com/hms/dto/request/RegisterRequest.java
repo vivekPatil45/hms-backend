@@ -31,7 +31,7 @@ public class RegisterRequest {
     private String fullName;
 
     @NotBlank(message = "Mobile number is required")
-    @Pattern(regexp = "^\\+\\d{1,3}-\\d{8,10}$", message = "Enter a valid mobile number.")
+    @Pattern(regexp = "^\\+\\d{1,3}-\\d{8,11}$", message = "Enter a valid mobile number (format: +CountryCode-Number).")
     private String mobileNumber;
 
     @NotBlank(message = "Address is required")

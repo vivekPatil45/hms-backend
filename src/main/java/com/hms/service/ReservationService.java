@@ -174,14 +174,36 @@ public class ReservationService {
         BigDecimal refundAmount = (BigDecimal) check.get("refundAmount");
 
         reservation.setStatus(ReservationStatus.CANCELLED);
-        if (refundAmount.compareTo(BigDecimal.ZERO) > 0) {
-            reservation.setPaymentStatus(PaymentStatus.REFUNDED);
+
+        // Correctly handle REFUND or PARTIAL depending on refund ratio
+        if (reservation.getPaymentStatus() == PaymentStatus.PAID) {
+            if (refundAmount.compareTo(reservation.getTotalAmount()) >= 0) {
+                reservation.setPaymentStatus(PaymentStatus.REFUNDED);
+            } else if (refundAmount.compareTo(BigDecimal.ZERO) > 0) {
+                reservation.setPaymentStatus(PaymentStatus.PARTIAL); // Partial refund given
+            }
         }
+
         reservation.setCancellationReason(cancellationReason);
         reservation.setCancellationDate(java.time.LocalDateTime.now());
         reservation.setRefundAmount(refundAmount);
 
         reservationRepository.save(reservation);
+
+        // Update bill status
+        try {
+            com.hms.entity.Bill bill = billService.getBillByReservationId(reservationId);
+            if (bill != null) {
+                if (reservation.getPaymentStatus() == PaymentStatus.REFUNDED
+                        || reservation.getPaymentStatus() == PaymentStatus.PARTIAL) {
+                    billService.updateBillStatus(bill.getBillId(), reservation.getPaymentStatus());
+                } else if (reservation.getPaymentStatus() == PaymentStatus.PENDING) {
+                    billService.updateBillStatus(bill.getBillId(), PaymentStatus.FAILED); // Cancelled before paying
+                }
+            }
+        } catch (Exception e) {
+            // Bill not found, ignore
+        }
     }
 
     @Transactional
@@ -202,7 +224,7 @@ public class ReservationService {
 
         com.hms.entity.Bill bill = billService.getBillByReservationId(reservationId);
         if (bill != null) {
-            billService.updatePayment(bill.getBillId(), savedReservation.getTotalAmount(), paymentMethod);
+            billService.updatePayment(bill.getBillId(), bill.getBalanceAmount(), paymentMethod);
         }
 
         return savedReservation;
@@ -211,11 +233,17 @@ public class ReservationService {
     @Transactional(readOnly = true)
     public java.util.Map<String, Object> checkModification(String reservationId,
             com.hms.dto.request.ModifyReservationRequest request) {
+        return checkModification(reservationId, request, false);
+    }
+
+    @Transactional(readOnly = true)
+    public java.util.Map<String, Object> checkModification(String reservationId,
+            com.hms.dto.request.ModifyReservationRequest request, boolean isAdmin) {
         Reservation reservation = getReservationById(reservationId);
 
         long hoursUntilCheckIn = ChronoUnit.HOURS.between(java.time.LocalDateTime.now(),
                 request.getCheckInDate().atStartOfDay());
-        if (hoursUntilCheckIn < 24) {
+        if (!isAdmin && hoursUntilCheckIn < 24) {
             throw new InvalidRequestException(
                     "Modifications are not allowed within 24 hours of check-in. Please contact support.");
         }
@@ -261,9 +289,15 @@ public class ReservationService {
 
     @Transactional
     public Reservation modifyReservation(String reservationId, com.hms.dto.request.ModifyReservationRequest request) {
+        return modifyReservation(reservationId, request, false);
+    }
+
+    @Transactional
+    public Reservation modifyReservation(String reservationId, com.hms.dto.request.ModifyReservationRequest request,
+            boolean isAdmin) {
         Reservation reservation = getReservationById(reservationId);
 
-        java.util.Map<String, Object> modificationDetails = checkModification(reservationId, request);
+        java.util.Map<String, Object> modificationDetails = checkModification(reservationId, request, isAdmin);
         BigDecimal priceDifference = (BigDecimal) modificationDetails.get("priceDifference");
         BigDecimal newTotalAmount = (BigDecimal) modificationDetails.get("newTotalAmount");
 
@@ -294,7 +328,25 @@ public class ReservationService {
             // We can process a refund offline.
         }
 
-        return reservationRepository.save(reservation);
+        Reservation savedReservation = reservationRepository.save(reservation);
+        try {
+            com.hms.entity.Bill updatedBill = billService.syncBillWithReservation(savedReservation);
+            if (updatedBill != null) {
+                savedReservation.setPaymentStatus(updatedBill.getPaymentStatus());
+                if (updatedBill.getPaymentStatus() == PaymentStatus.PAID) {
+                    savedReservation.setStatus(ReservationStatus.CONFIRMED);
+                } else if (updatedBill.getPaymentStatus() == PaymentStatus.PARTIAL) {
+                    savedReservation.setStatus(ReservationStatus.PENDING_PAYMENT);
+                } else {
+                    savedReservation.setStatus(ReservationStatus.PENDING_PAYMENT);
+                }
+                savedReservation = reservationRepository.save(savedReservation);
+            }
+        } catch (Exception e) {
+            // Bill may not exist yet if created as pending offline payment
+        }
+
+        return savedReservation;
     }
 
     private BigDecimal calculateRefund(Reservation reservation) {
